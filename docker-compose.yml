@@ -1,0 +1,29 @@
+services:
+  agent:
+    build: .
+    image: aiwolf-nlp-agent:latest
+    # container_name: aiwolf-nlp-agent # コンテナ名を指定すると複数起動できなくなるのでコメントアウト
+    depends_on:
+      - server
+    environment:
+      # uv関連の設定（必要に応じて）
+      - PYTHONUNBUFFERED=1
+      # サーバへの接続設定
+      # - AIWOLF_SERVER_URL=ws://server:8080/ws
+      # - AIWOLF_AGENT_NAME=UvAgent
+    restart: on-failure
+
+  server:
+    build: ../aiwolf-nlp-server
+    image: aiwolf-nlp-server:latest
+    container_name: aiwolf-nlp-server
+    ports:
+      - "8080:8080"
+    # READMEにある .env ファイルを読み込む設定
+    env_file:
+      - ../aiwolf-nlp-server/config/.env
+    volumes:
+      - ../aiwolf-nlp-server/logs:/root/logs
+    restart: always
+    environment:
+      - TZ=Asia/Tokyo
