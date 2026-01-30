@@ -1,5 +1,5 @@
 web_socket:
-  url: ws://127.0.0.1:8080/ws
+  url: ws://server:8080/ws
   token:
   auto_reconnect: false
 
