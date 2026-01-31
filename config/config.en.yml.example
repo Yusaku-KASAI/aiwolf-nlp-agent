@@ -9,7 +9,7 @@ agent:
   kill_on_timeout: true
 
 llm:
-  type: google
+  type: dmr
   sleep_time: 3
 
 openai:

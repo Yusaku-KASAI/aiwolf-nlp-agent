@@ -299,6 +299,50 @@ class Agent:
         """
         self._send_message_to_llm(self.request)
 
+    def _parse_agent_name(self, response: str | None) -> str:
+        """Parse and validate agent name from LLM response.
+
+        LLMの応答からエージェント名を抽出・検証する.
+
+        Args:
+            response (str | None): LLM response / LLMの応答
+
+        Returns:
+            str: Valid agent name / 有効なエージェント名
+        """
+        if not response:
+            self.agent_logger.logger.warning("LLM returned empty response. Using random agent.")
+            return random.choice(self.get_alive_agents())  # noqa: S311
+
+        # Strip whitespace and common punctuation
+        # 空白と句読点を除去
+        cleaned = response.strip().rstrip("。、.,!！?？")
+
+        # Get list of alive agents
+        # 生存エージェントのリストを取得
+        alive_agents = self.get_alive_agents()
+
+        # Check for exact match
+        # 完全一致を確認
+        if cleaned in alive_agents:
+            return cleaned
+
+        # Check if any agent name is contained in the response
+        # 応答の中にエージェント名が含まれているか確認
+        for agent in alive_agents:
+            if agent in response:
+                self.agent_logger.logger.info(
+                    f"Extracted agent name '{agent}' from response: {response}"
+                )
+                return agent
+
+        # No valid agent name found, use random choice
+        # 有効なエージェント名が見つからない場合はランダム選択
+        self.agent_logger.logger.warning(
+            f"Invalid agent name in response: '{response}'. Using random choice."
+        )
+        return random.choice(alive_agents)  # noqa: S311
+
     def divine(self) -> str:
         """Return response to divine request.
 
@@ -307,9 +351,8 @@ class Agent:
         Returns:
             str: Agent name to divine / 占い対象のエージェント名
         """
-        return self._send_message_to_llm(self.request) or random.choice(  # noqa: S311
-            self.get_alive_agents(),
-        )
+        response = self._send_message_to_llm(self.request)
+        return self._parse_agent_name(response)
 
     def guard(self) -> str:
         """Return response to guard request.
@@ -319,9 +362,8 @@ class Agent:
         Returns:
             str: Agent name to guard / 護衛対象のエージェント名
         """
-        return self._send_message_to_llm(self.request) or random.choice(  # noqa: S311
-            self.get_alive_agents(),
-        )
+        response = self._send_message_to_llm(self.request)
+        return self._parse_agent_name(response)
 
     def vote(self) -> str:
         """Return response to vote request.
@@ -331,9 +373,8 @@ class Agent:
         Returns:
             str: Agent name to vote / 投票対象のエージェント名
         """
-        return self._send_message_to_llm(self.request) or random.choice(  # noqa: S311
-            self.get_alive_agents(),
-        )
+        response = self._send_message_to_llm(self.request)
+        return self._parse_agent_name(response)
 
     def attack(self) -> str:
         """Return response to attack request.
@@ -343,9 +384,8 @@ class Agent:
         Returns:
             str: Agent name to attack / 襲撃対象のエージェント名
         """
-        return self._send_message_to_llm(self.request) or random.choice(  # noqa: S311
-            self.get_alive_agents(),
-        )
+        response = self._send_message_to_llm(self.request)
+        return self._parse_agent_name(response)
 
     def finish(self) -> None:
         """Perform processing for game finish request.

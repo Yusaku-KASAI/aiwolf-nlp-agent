@@ -9,7 +9,7 @@ agent:
   kill_on_timeout: true
 
 llm:
-  type: google
+  type: dmr
   sleep_time: 3
 
 openai:
@@ -110,6 +110,9 @@ prompt:
     {%- endif %}
   divine: |-
     占いリクエスト
+    以下の生存者の中から1人を選んで、その名前のみを出力してください。
+    説明や句読点は不要です。名前だけを出力してください。
+
     対象:
     {% for k, v in info.status_map.items() -%}
     {%- if v == 'ALIVE' -%}
@@ -118,6 +121,9 @@ prompt:
     {%- endfor %}
   guard: |-
     護衛リクエスト
+    以下の生存者の中から1人を選んで、その名前のみを出力してください。
+    説明や句読点は不要です。名前だけを出力してください。
+
     対象:
     {% for k, v in info.status_map.items() -%}
     {%- if v == 'ALIVE' -%}
@@ -126,6 +132,9 @@ prompt:
     {%- endfor %}
   vote: |-
     投票リクエスト
+    以下の生存者の中から1人を選んで、その名前のみを出力してください。
+    説明や句読点は不要です。名前だけを出力してください。
+
     対象:
     {% for k, v in info.status_map.items() -%}
     {%- if v == 'ALIVE' -%}
@@ -134,6 +143,9 @@ prompt:
     {%- endfor %}
   attack: |-
     襲撃リクエスト
+    以下の生存者の中から1人を選んで、その名前のみを出力してください。
+    説明や句読点は不要です。名前だけを出力してください。
+
     対象:
     {% for k, v in info.status_map.items() -%}
     {%- if v == 'ALIVE' -%}
