@@ -25,6 +25,11 @@ ollama:
   temperature: 0.7
   base_url: http://localhost:11434
 
+dmr:
+  model: ai/gemma3:latest
+  temperature: 0.7
+  base_url: http://model-runner.docker.internal/engines/v1
+
 prompt:
   initialize: |-
     あなたは人狼ゲームのエージェントです。

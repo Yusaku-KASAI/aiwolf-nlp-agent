@@ -104,7 +104,11 @@ class Agent:
             self = args[0] if args else None
             if not isinstance(self, Agent):
                 raise TypeError(self, " is not an Agent instance")
-            timeout_value = (self.setting.timeout.action if hasattr(self, "setting") and self.setting else 0) // 1000
+            timeout_value = (
+                self.setting.timeout.action
+                if hasattr(self, "setting") and self.setting
+                else 0
+            ) // 1000
             if timeout_value > 0:
                 thread.join(timeout=timeout_value)
                 if thread.is_alive():
@@ -195,7 +199,9 @@ class Agent:
             return None
         try:
             self.llm_message_history.append(HumanMessage(content=prompt))
-            response = (self.llm_model | StrOutputParser()).invoke(self.llm_message_history)
+            response = (self.llm_model | StrOutputParser()).invoke(
+                self.llm_message_history
+            )
             self.llm_message_history.append(AIMessage(content=response))
             self.agent_logger.logger.info(["LLM", prompt, response])
         except Exception:
@@ -242,6 +248,13 @@ class Agent:
                     model=str(self.config["ollama"]["model"]),
                     temperature=float(self.config["ollama"]["temperature"]),
                     base_url=str(self.config["ollama"]["base_url"]),
+                )
+            case "dmr":
+                self.llm_model = ChatOpenAI(
+                    model=str(self.config["dmr"]["model"]),
+                    temperature=float(self.config["dmr"]["temperature"]),
+                    api_key=SecretStr("dummy"),
+                    base_url=str(self.config["dmr"]["base_url"]),
                 )
             case _:
                 raise ValueError(model_type, "Unknown LLM type")
