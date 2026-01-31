@@ -363,11 +363,11 @@ class Agent:
         if self.info and self.info.divine_result:
             self.memory.add_my_divine_result(
                 self.info.divine_result.target,
-                str(self.info.divine_result.result) == "WEREWOLF",  # Species型を文字列に変換
+                self.info.divine_result.result.name == "WEREWOLF",  # Enum.name で比較
                 self.info.day,
             )
             self.agent_logger.logger.info(
-                f"My divine result: {self.info.divine_result.target} -> {self.info.divine_result.result}"
+                f"My divine result: {self.info.divine_result.target} -> {self.info.divine_result.result} (is_werewolf={self.info.divine_result.result.name == 'WEREWOLF'})"
             )
 
         # Record my medium result if available
@@ -375,7 +375,7 @@ class Agent:
         if self.info and self.info.medium_result:
             self.memory.add_my_medium_result(
                 self.info.medium_result.target,
-                str(self.info.medium_result.result) == "WEREWOLF",  # Species型を文字列に変換
+                self.info.medium_result.result.name == "WEREWOLF",  # Enum.name で比較
                 self.info.day,
             )
             self.agent_logger.logger.info(

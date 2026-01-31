@@ -204,7 +204,7 @@ class Seer(Agent):
 
         # 占い結果をチェック
         if self.info and self.info.divine_result:
-            if str(self.info.divine_result.result) == "WEREWOLF":  # Species型を文字列に変換
+            if self.info.divine_result.result.name == "WEREWOLF":  # Enum.name で比較
                 self.found_werewolf = True
                 self.agent_logger.logger.info(
                     f"Found werewolf: {self.info.divine_result.target}"
