@@ -44,6 +44,9 @@ class Seer(Agent):
         # 占った人のリスト（重複占いを避ける）
         self.divined_agents: list[str] = []
 
+        # 報告済みの占い結果を記録（重複報告を避ける）
+        self.reported_results: set[str] = set()
+
     def should_claim_seer(self) -> bool:
         """判断是否应该CO占い師.
 
@@ -116,8 +119,21 @@ class Seer(Agent):
             is_werewolf = result["is_werewolf"]
             day = result["day"]
 
+            # 報告済みかチェック
+            result_key = f"{day}_{target}"
+            if result_key in self.reported_results:
+                self.agent_logger.logger.info(
+                    f"Result already reported: {result_key}"
+                )
+                return ""
+
             # まだ報告していない結果のみ（当日の結果）
             if self.info and day == self.info.day:
+                # 報告済みとしてマーク
+                self.reported_results.add(result_key)
+                self.agent_logger.logger.info(
+                    f"Reporting new result: {result_key}"
+                )
                 if is_werewolf:
                     return f"{target}を占いました。人狼です！投票をお願いします。"
                 else:

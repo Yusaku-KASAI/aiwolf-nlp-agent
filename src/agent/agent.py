@@ -344,15 +344,38 @@ class Agent:
                         f"Medium result detected: {talk.agent} -> {result['target']}: {result['result']}"
                     )
 
+            # Update current day in memory
+            # メモリの現在日を更新
+            if self.info:
+                self.memory.update_current_day(self.info.day)
+
             # Detect contradictions
             # 矛盾を検出
             contradictions = self.memory.detect_contradictions()
             if contradictions:
                 self.agent_logger.logger.info(f"Contradictions detected: {contradictions}")
 
-            # Calculate suspicion scores
-            # 疑惑スコアを計算
+            # Calculate suspicion scores (multi-factor analysis)
+            # 疑惑スコアを計算（多要素分析）
             self.memory.calculate_all_suspicions(alive_agents, self.talk_counts)
+
+            # Calculate trust scores
+            # 信頼度スコアを計算
+            self.memory.calculate_all_trust(alive_agents)
+
+            # Log detailed analysis
+            # 詳細分析をログ出力
+            self.agent_logger.logger.info(
+                f"=== Suspicion Analysis (Day {self.info.day if self.info else 0}) ==="
+            )
+            for agent in alive_agents:
+                susp_score = self.memory.suspicion_scores.get(agent, 5.0)
+                trust_score = self.memory.trust_scores.get(agent, 5.0)
+                breakdown = self.memory.score_breakdown.get(agent, {})
+                self.agent_logger.logger.info(
+                    f"  {agent}: 疑惑={susp_score:.1f}, 信頼={trust_score:.1f}, "
+                    f"内訳={breakdown}"
+                )
 
             self.agent_logger.logger.debug(
                 f"Memory summary: {self.memory.get_summary()}"
@@ -523,8 +546,33 @@ class Agent:
         Returns:
             str: Agent name to vote / 投票対象のエージェント名
         """
+        # Get voting recommendation from memory system
+        # メモリシステムから投票推奨を取得
+        my_name = self.info.agent if self.info else self.agent_name
+        recommendation, reasoning = self.memory.get_voting_recommendation(
+            exclude=[my_name]
+        )
+
+        if recommendation:
+            self.agent_logger.logger.info(
+                f"=== Voting Analysis ===\n"
+                f"  推奨: {recommendation}\n"
+                f"  理由: {reasoning}"
+            )
+
+        # Get LLM decision
+        # LLMの判断を取得
         response = self._send_message_to_llm(self.request)
-        return self._parse_agent_name(response)
+        voted_agent = self._parse_agent_name(response)
+
+        # Log if LLM chose differently from recommendation
+        # LLMが推奨と異なる選択をした場合はログ出力
+        if recommendation and voted_agent != recommendation:
+            self.agent_logger.logger.warning(
+                f"LLM chose {voted_agent} instead of recommended {recommendation}"
+            )
+
+        return voted_agent
 
     def attack(self) -> str:
         """Return response to attack request.
