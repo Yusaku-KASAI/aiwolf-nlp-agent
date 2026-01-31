@@ -85,6 +85,10 @@ class Agent:
         # 疑惑度計算用の発言数
         self.talk_counts: dict[str, int] = {}
 
+        # Own talk count in current day
+        # 今日の自分の発言回数
+        self.my_talk_count_today: int = 0
+
         load_dotenv(Path(__file__).parent.joinpath("./../../config/.env"))
 
     @staticmethod
@@ -284,6 +288,10 @@ class Agent:
 
         昼開始リクエストに対する処理を行う.
         """
+        # Reset daily talk count
+        # 1日の発言回数をリセット
+        self.my_talk_count_today = 0
+
         # Parse talk history and update memory
         # 発言履歴を解析してメモリを更新
         if self.talk_history:
@@ -355,7 +363,7 @@ class Agent:
         if self.info and self.info.divine_result:
             self.memory.add_my_divine_result(
                 self.info.divine_result.target,
-                self.info.divine_result.result == "WEREWOLF",
+                str(self.info.divine_result.result) == "WEREWOLF",  # Species型を文字列に変換
                 self.info.day,
             )
             self.agent_logger.logger.info(
@@ -367,7 +375,7 @@ class Agent:
         if self.info and self.info.medium_result:
             self.memory.add_my_medium_result(
                 self.info.medium_result.target,
-                self.info.medium_result.result == "WEREWOLF",
+                str(self.info.medium_result.result) == "WEREWOLF",  # Species型を文字列に変換
                 self.info.day,
             )
             self.agent_logger.logger.info(
@@ -398,7 +406,41 @@ class Agent:
         """
         response = self._send_message_to_llm(self.request)
         self.sent_talk_count = len(self.talk_history)
+
+        # Early Over prevention
+        # 早期Over防止
+        if response and response.strip() == "Over":
+            # 今日まだ2回未満しか発言していない場合は、Overを防止
+            if self.my_talk_count_today < 2:
+                self.agent_logger.logger.info(
+                    f"Preventing early Over (talk count: {self.my_talk_count_today})"
+                )
+                # フォールバック発言を生成
+                response = self._generate_fallback_talk()
+
+        # 発言回数をカウント
+        if response and response.strip() != "Over":
+            self.my_talk_count_today += 1
+
         return response or ""
+
+    def _generate_fallback_talk(self) -> str:
+        """Generate fallback talk when preventing early Over.
+
+        早期Overを防止する際のフォールバック発言を生成する.
+
+        Returns:
+            str: Fallback talk message / フォールバック発言
+        """
+        # 役職に応じたフォールバック発言
+        if self.role == Role.SEER:
+            return "状況を整理したいと思います。皆さんの意見を聞かせてください。"
+        elif self.role == Role.WEREWOLF:
+            return "もう少し情報を集めたいですね。"
+        elif self.role == Role.POSSESSED:
+            return "慎重に判断したいので、もう少し議論しましょう。"
+        else:  # VILLAGER, MEDIUM, BODYGUARD
+            return "皆さんの意見を参考にしたいです。"
 
     def daily_finish(self) -> None:
         """Perform processing for daily finish request.

@@ -395,597 +395,489 @@ vote: |-
 
 ## 実行結果と新たな問題点
 
+### 第1回実行 (log/20260131104130803/)
+
 **実行日**: 2026-01-31
-**ログ**: log/20260131104130803/
+**実装前**: メモリシステム、発言パーサー実装前
 
-### 良い点
-- ゲームが正常に終了（FINISHリクエスト受信）
-- メモリシステムが動作（Memory summary記録）
-- 疑惑スコアが計算される
-- 投票・襲撃が正常に機能
+#### 発見された問題
+1. 占い師が役職COをしない（占い結果も報告なし）
+2. 発言が浅く戦略性が低い（すぐに「Over」）
+3. 疑惑スコアの差別化が不十分（全員5.0点）
+4. 発言パーサーが機能していない
 
-### 新たに発見された問題
+### 第2回実行 (log/20260131110735209/) ⚠️ 最新
 
-#### 1. 占い師が役職COをしない ⚠️ 重大
-- **症状**: 占い師（ミオ）が自分の役職を公表していない
-- **影響**: 占い結果も報告していない
-- **ログ確認**: claimsが常に空{}
-- **原因分析**:
-  - `should_claim_seer()` の条件が厳しすぎる可能性
-  - LLMが占い師COの発言を生成していない
-  - プロンプトに占い師COの指示が不足
+**実行日**: 2026-01-31 11:07-11:15
+**実装後**: 占い師CO機能、発言品質改善、早期Over防止を実装
 
-#### 2. 発言が浅く戦略性が低い
+#### ゲーム結果
+- **占い師**: ミヅキ
+- **人狼**: ダイスケ
+- **結末**: 人狼陣営の勝利
+
+#### タイムライン
+| Day | イベント | 詳細 |
+|-----|---------|------|
+| 0日目夜 | 占い実行 | ミヅキ→ミヅキを占う（自分自身！） |
+| 1日目朝 | 議論 | ミヅキ、CO**せず**（divine_result=None） |
+| 1日目夜 | 占い実行 | ミヅキ→ダイスケを占う →**人狼判定** |
+| 2日目朝 | 襲撃結果 | ミヅキ（占い師）が**襲撃されて死亡** |
+| 2日目 | - | ミヅキは死亡しているため発言不可 |
+
+#### 良い点 ✅
+1. ゲームが正常に終了（FINISH受信）
+2. メモリシステムが動作
+3. 占い結果の記録: `My divine result: ダイスケ -> Species.WEREWOLF` ログ確認
+4. 人狼発見検知: `Found werewolf: ダイスケ` ログ確認
+5. 早期Over防止機能は動作していない（ログなし）が、実装自体は完了
+
+#### 新たに発見された問題 ⚠️
+
+##### 1. 占い師が自分自身を占ってしまう 🐛 重大
+- **症状**: Night 0でミヅキが自分（ミヅキ）を占った
+- **ログ証拠**: `['Request.DIVINE', 'ミヅキ']` (11:10:20,457)
+- **影響**:
+  - Day 1で有効な占い結果がない
+  - Day 1でCOできない（divine_resultsが空）
+- **原因**: `Seer.divine()` の対象選択ロジックが自分を除外していない
+
+##### 2. 占い結果がメモリに追加されていない 🐛 重大
 - **症状**:
-  - すぐに「Over」を言ってしまう
-  - 情報収集や推論が不足
-  - 一般的な会話のみで、役職に関する議論がない
-- **原因分析**:
-  - プロンプトが具体的な行動を促していない
-  - LLMが人狼ゲームの戦略を理解していない
-  - 会話を継続するインセンティブがない
+  - Day 1: `'divine_results_count': 0`
+  - Day 2: `'divine_results_count': 0`
+- **ログ証拠**: Memory summary（11:10:20,481、11:13:49,443）
+- **影響**:
+  - `should_claim_seer()` の条件 `self.memory.divine_results` が常にFalse
+  - 占い師が永遠にCOしない
+- **原因**:
+  - agent.py:366 `self.info.divine_result.result == "WEREWOLF"` がSpecies型と文字列を比較
+  - 比較が常にFalseになり、is_werewolf=False で登録される
+  - しかしログには `My divine result: ダイスケ -> Species.WEREWOLF` があるので、add_my_divine_result()自体は呼ばれている
+  - **Memory summary のログタイミングが早すぎる**: agent.py:357-359でログ、その後363-371でdivine_result追加
 
-#### 3. 疑惑スコアの差別化が不十分
-- **症状**: ほぼ全員が5.0点
-- **影響**: 行動や発言内容が反映されていない
-- **原因分析**:
-  - スコア計算ロジックが単純すぎる
-  - 発言内容の分析が不足
-  - 投票パターンが考慮されていない
+##### 3. 占い師が2日目にCOできなかった（死亡のため） 😢
+- **症状**: Day 2でミヅキは死亡しているため、TALK要求が来ない
+- **ログ証拠**: Day 2のtalk_historyにミヅキの発言なし
+- **影響**:
+  - 人狼発見（ダイスケ=WEREWOLF）を報告できず
+  - 占い師の情報が村人陣営に伝わらない
+- **根本原因**:
+  - Day 1でCOしなかったため、人狼に狙われやすかった
+  - Day 1でCOしない理由は「divine_resultsが空」のため
 
-#### 4. 発言パーサーが実質機能していない
-- **症状**: 役職COや占い結果を報告する発言自体がない
-- **影響**: パーサーのテストができていない
-- **原因分析**:
-  - そもそも発言生成側が役職COをしていない
-  - パーサーの実装は正しいが、テストデータがない
+##### 4. Species型とstring比較のバグ 🐛 クリティカル
+- **場所1**: agent.py:366
+  ```python
+  self.info.divine_result.result == "WEREWOLF"  # Species.WEREWOLF と比較すべき
+  ```
+- **場所2**: seer.py:204
+  ```python
+  self.info.divine_result.result == "WEREWOLF"  # 同上
+  ```
+- **影響**:
+  - is_werewolf判定が常にFalseになる
+  - found_werewolf フラグがセットされない（実際はログでセットされているが）
+- **修正必要**: Species.WEREWOLF または `str(result) == "WEREWOLF"` に変更
+
+##### 5. CO条件が厳しすぎる
+- **現在の条件**: `info.day >= 2 and self.memory.divine_results`
+- **問題点**:
+  - Day 2まで待つと襲撃されるリスクが高い
+  - divine_resultsが空だとCOしない
+- **提案**: Day 1でもCOする選択肢を追加
+
+#### 結論
+実装した機能（占い師CO、早期Over防止）は「コード的には完成」したが、以下の理由で**実際のゲームでは発動しなかった**:
+1. 占い師が自分を占う → Day 1で有効な結果なし
+2. Memory systemがdivine_resultを正しく追加していない（ログタイミング問題 or Species比較バグ）
+3. Day 2の前に占い師が死亡 → CO機能が発動する機会がない
 
 ---
 
 ## 改善案
 
-### 優先度: 最優先（緊急）
+### 優先度: 🔥 クリティカル（即修正必須）
 
-#### 1. 占い師の役職CO機能の修正 ⚠️
+これらはゲームを機能不全にする致命的なバグです。
 
-**目的**: 占い師が適切なタイミングで役職COし、占い結果を報告できるようにする
+#### 1. Species型とstring比較のバグ修正 🐛
+
+**場所**:
+- src/agent/agent.py:366
+- src/agent/seer.py:204
+
+**現在のコード**:
+```python
+# agent.py:366
+if self.info and self.info.divine_result:
+    self.memory.add_my_divine_result(
+        self.info.divine_result.target,
+        self.info.divine_result.result == "WEREWOLF",  # ← バグ: Species型とstring比較
+        self.info.day,
+    )
+
+# seer.py:204
+if self.info.divine_result.result == "WEREWOLF":  # ← バグ: Species型とstring比較
+    self.found_werewolf = True
+```
+
+**修正コード**:
+```python
+# agent.py:366 - Species型を文字列に変換して比較
+if self.info and self.info.divine_result:
+    self.memory.add_my_divine_result(
+        self.info.divine_result.target,
+        str(self.info.divine_result.result) == "WEREWOLF",  # ← 修正
+        self.info.day,
+    )
+
+# seer.py:204 - 同様に修正
+if self.info and self.info.divine_result:
+    if str(self.info.divine_result.result) == "WEREWOLF":  # ← 修正
+        self.found_werewolf = True
+```
+
+**影響**: この修正により占い結果が正しく判定され、人狼発見時にCOが発動するようになる。
+
+#### 2. 占い師が自分自身を占うバグ修正 🐛
+
+**場所**: src/agent/seer.py の `divine()` メソッド
+
+**問題**: 占い対象の選択で自分自身を除外していない
+
+**現在のコード**:
+```python
+def divine(self) -> str:
+    """Return response to divine request."""
+    if not self.info:
+        return ""
+
+    alive_agents = self.get_alive_agents()
+    # 疑惑スコアが高い順にソート
+    sorted_agents = sorted(
+        alive_agents,
+        key=lambda x: self.memory.suspicion_scores.get(x, 5.0),
+        reverse=True
+    )
+    # ... 既に占った人を除外
+```
+
+**修正コード**:
+```python
+def divine(self) -> str:
+    """Return response to divine request."""
+    if not self.info:
+        return ""
+
+    alive_agents = self.get_alive_agents()
+
+    # 自分自身を除外（重要！）
+    candidates = [a for a in alive_agents if a != self.name]
+
+    # 既に占った人を除外
+    candidates = [a for a in candidates if a not in self.divined_agents]
+
+    if not candidates:
+        # 全員占い終わったら、適当に返す
+        return alive_agents[0] if alive_agents else ""
+
+    # 疑惑スコアが高い順にソート
+    sorted_agents = sorted(
+        candidates,
+        key=lambda x: self.memory.suspicion_scores.get(x, 5.0),
+        reverse=True
+    )
+
+    target = sorted_agents[0]
+    self.divined_agents.append(target)
+    return target
+```
+
+**影響**: Night 0で有効な占い結果が得られ、Day 1でCOできるようになる。
+
+### 優先度: ⚠️ 最優先（緊急）
+
+#### 3. 占い師CO条件の改善
+
+**目的**: 占い師が襲撃される前にCOできるようにする
 
 **現状の問題**:
-- 占い師（Seer）が自分の役職を公表していない
-- 占い結果も報告していない
-- ログでclaimsが常に空{}
+- 現在: `info.day >= 2 and self.memory.divine_results`（2日目までCOしない）
+- Day 2まで待つと襲撃されるリスクが高い
+- 実際にDay 2の朝には既に死亡していた
 
-**実装案**:
-
-##### 1. `src/agent/seer.py` の `should_claim_seer()` を修正
+**修正案**:
 ```python
 def should_claim_seer(self) -> bool:
     """COすべきタイミングか判断"""
-    # 1日目の夜に占い結果があれば、2日目にCO
-    if self.info.day >= 2 and not self.has_claimed_seer:
+    if self.has_claimed_seer:
+        return False
+
+    # Day 1で占い結果があればCO（早期CO戦略）
+    if self.info and self.info.day >= 1 and self.memory.divine_results:
         return True
 
     # 人狼を見つけた場合は即CO
     if self.found_werewolf:
         return True
 
-    # 他に占い師COが出た場合
-    seers = [a for a, c in self.memory.claims.items() if c.get("role") == "占い師"]
-    if len(seers) > 0:
-        return True
+    # 他に占い師COが出た場合は対抗CO
+    if self.memory.claims:
+        seers = [agent for agent, claim in self.memory.claims.items()
+                if claim.get("role") == "占い師"]
+        if len(seers) > 0:
+            return True
 
     return False
 ```
 
-##### 2. プロンプトに占い師CO指示を追加
-```yaml
-# config/config.yml の seer 用 talk プロンプト
-seer_talk: |-
-  あなたは占い師です。以下のガイドラインに従って発言してください：
+**メリット**:
+- 襲撃されるリスクを減らせる
+- 村人陣営に早く情報を伝えられる
 
-  1. まだ役職COしていない場合、「私は占い師です」と明確に宣言する
-  2. 占い結果がある場合、「[名前]を占いました。[結果]です」と報告する
-  3. 人狼を見つけた場合は強く主張し、投票を呼びかける
+**デメリット**:
+- 人狼に占い師の位置がバレる
+- しかし、黙っていても襲撃されるので、早めにCOする方が得策
 
-  現在の状況：
-  - 日数: {{ info.day }}日目
-  - 占い済み: {% for r in divine_results %}{{ r.target }}({{ "人狼" if r.result else "村人" }}){% if not loop.last %}, {% endif %}{% endfor %}
-  - CO済み: {{ "はい" if has_claimed_seer else "いいえ" }}
-```
+---
 
-##### 3. `talk()` メソッドを修正して確実にCOさせる
-```python
-def talk(self) -> str:
-    """戦略的な発言"""
-    # 最優先: COすべきか判断
-    if not self.has_claimed_seer and self.should_claim_seer():
-        self.has_claimed_seer = True
-        message = self.create_seer_co_message()
-        self.agent_logger.logger.info(f"Claiming seer role: {message}")
-        return message
+### 優先度: 🟡 高（できるだけ早く）
 
-    # 占い結果の報告（CO済みの場合のみ）
-    if self.has_claimed_seer and self.divine_results:
-        latest = self.divine_results[-1]
-        if latest["day"] == self.info.day and not latest.get("announced", False):
-            latest["announced"] = True
-            message = self.create_divine_result_message(latest)
-            self.agent_logger.logger.info(f"Announcing divine result: {message}")
-            return message
+これらは既に実装済みだが、上記クリティカルバグのせいで機能していなかった項目です。
 
-    # 通常の発言
-    return super().talk()
+#### 4. 占い師CO機能（実装済み、バグ修正後に機能する見込み）
 
-def create_seer_co_message(self) -> str:
-    """占い師CO発言を生成（LLMに頼らず確実に生成）"""
-    return "私は占い師です。"
+**状態**: ✅ 実装済み (seer.py:128-148)
 
-def create_divine_result_message(self, result: dict) -> str:
-    """占い結果発言を生成（LLMに頼らず確実に生成）"""
-    target = result["target"]
-    is_werewolf = result["result"]
-    if is_werewolf:
-        return f"{target}を占いました。人狼です。投票をお願いします。"
-    else:
-        return f"{target}を占いました。村人です。"
-```
+**既存実装**:
+- `should_claim_seer()`: CO判定ロジック
+- `create_co_message()`: CO発言生成
+- `create_divine_result_message()`: 結果報告生成
+- `talk()`: COと結果報告を自動実行
 
-#### 2. 発言の質と量を改善
+**問題点**: 上記クリティカルバグ(#1, #2)により機能していない
 
-**目的**: 浅い発言や即「Over」を防ぎ、戦略的な会話を促進
+**修正後の動作**:
+1. Night 0で他者を占う → Day 1で結果がある
+2. Day 1で`should_claim_seer()`がTrueになる
+3. Day 1のTALKで自動的にCO
 
-**実装案**:
+#### 5. 早期Over防止機能（実装済み、テスト不足）
 
-##### 1. プロンプトに具体的な指示を追加
+**状態**: ✅ 実装済み (agent.py:216-239)
+
+**既存実装**:
+- `my_talk_count_today`: 発言カウンター
+- 2回未満の発言でOverを防止
+- `_generate_fallback_talk()`: フォールバック発言生成
+
+**問題点**: ログに "Preventing early Over" が出ていない
+- LLMが2回以上発言しているためOver防止が発動していない可能性
+- または、そもそもLLMが早期にOverを返していない
+
+**要検証**: 次回実行でログを確認
+
+---
+
+### 優先度: 🟢 中（余裕があれば）
+
+#### 6. 発言の質向上 - ゲームの本質に焦点を当てる ⚠️ 重要
+
+**状態**: ⚙️ 一部実装済み（config.yml のプロンプト強化）、但し不十分
+
+**現状の問題**:
+ログを見ると、エージェントが**人狼ゲームの本質と無関係な会話**をしている:
+- ❌ 「夜道を散歩していた」などのアリバイ会話（意味がない）
+- ❌ 「森の入り口付近を歩いていた」などの詳細（ゲームに影響しない）
+- ❌ 一般的な質問や相槌（情報が増えない）
+
+**人狼ゲームの本質**:
+1. **役職推理**: 誰が占い師か、誰が人狼か
+2. **矛盾検出**: 発言内容の矛盾、CO内容の食い違い
+3. **勝利戦略**: 自分の陣営が勝つための投票誘導
+
+**改善方針**:
+プロンプトに「これは人狼ゲームである」というメタ認知を明示し、本質的な会話に誘導する
+
+**具体的な実装案**:
+
+##### 1. talk プロンプトの抜本的改善
 ```yaml
 talk: |-
-  ## あなたの役割
-  役職: {{ role.value }}
-  目標: {{ "人狼を見つけて処刑する" if role.value in ["村人", "占い師", "霊媒師", "騎士"] else "村人を混乱させて生き残る" }}
+  # 🎯 人狼ゲームの本質を理解する
+  これは「人狼ゲーム」という推理ゲームです。以下の3点が重要です：
+  1. 役職推理: 誰が占い師/人狼/狂人か
+  2. 矛盾検出: 発言やCOの矛盾を指摘する
+  3. 勝利戦略: 投票で敵陣営を処刑する
 
-  ## 発言ガイドライン
-  以下のいずれかの内容を含む発言をしてください（複数可）：
-  1. 疑わしいプレイヤーの指摘と理由
-  2. 他のプレイヤーの発言への質問や反論
-  3. 自分の考えや推論の共有
-  4. 投票先の提案と理由
-  5. 役職COがある場合の検証や議論
+  # ❌ やってはいけないこと
+  - アリバイや行動の説明（「夜道を散歩していた」など）→ ゲームに影響しない
+  - 一般的な質問や相槌 → 情報が増えない
+  - 無意味な推測 → 根拠のない発言
 
-  ## 重要
-  - 「Over」は最後の手段です。まだ議論すべきことがある場合は発言を続けてください
-  - 発言は50文字以上、125文字以内を推奨
-  - 具体的な名前や理由を含めてください
+  # ✅ やるべきこと
+  あなたの役職: {{ role.value }}
+  {% if role.value == 'SEER' -%}
+  - CO済み？ {{ "はい" if has_claimed_seer else "いいえ" }}
+  - 占い結果がある場合は必ず報告
+  - 人狼を見つけた場合は投票を呼びかける
+  - 他の占い師COがいれば対抗する
+  {%- elif role.value == 'WEREWOLF' -%}
+  - 村人のふりをする
+  - 占い師を特定して襲撃する
+  - 偽の推理をして村人を混乱させる
+  {%- elif role.value == 'POSSESSED' -%}
+  - 村人のふりをする
+  - 人狼を守るために誤誘導する
+  - 偽占い師COも検討する
+  {%- else -%}
+  - 占い師のCOを待つ
+  - 占い結果を基に人狼を推理する
+  - 矛盾する発言をした人を指摘する
+  {%- endif %}
 
-  ## 会話履歴
+  ## 📊 現在の状況（Day {{ info.day }}）
+  生存者: {{ status_map.keys() | select("alive") | list | join(", ") }}
+
+  ## 💭 あなたが今すべき発言
+  以下のいずれかを含む発言をしてください：
+  1. **役職CO**（占い師/霊媒師の場合）
+  2. **占い結果の報告**（占い師の場合）
+  3. **疑わしい人物の指摘と理由**（過去の発言から）
+  4. **投票先の提案と理由**
+  5. **他者の発言の矛盾を指摘**
+
+  ## 📜 直近の会話履歴
   {% for w in talk_history[sent_talk_count:] -%}
   {{ w.agent }}: {{ w.text }}
   {% endfor %}
 
-  ## あなたの発言
-  上記を踏まえて、戦略的な発言をしてください。
-  議論すべき内容がもうない場合のみ「Over」と発言してください。
+  ## ⚡ あなたの発言を生成してください
+  - 文字数: 50-125文字
+  - 内容: 上記5つのいずれかに該当する、ゲームの本質に関わる発言
+  - 禁止: アリバイ、無意味な質問、一般論
+  - 終了: 議論すべき内容がもうない場合のみ「Over」
 ```
 
-##### 2. 発言数カウンターの実装
-```python
-class Agent:
-    def __init__(self, ...):
-        ...
-        self.talk_count_today = 0
-        self.max_talk_per_day = 4
-
-    def talk(self) -> str:
-        """発言生成"""
-        self.talk_count_today += 1
-
-        # 最後の発言機会の場合は必ず内容のある発言をする
-        if self.talk_count_today >= self.max_talk_per_day:
-            response = self._send_message_to_llm_with_instruction(
-                "これが最後の発言機会です。重要な情報や意見を必ず述べてください。"
-            )
-            return response if response and response != "Over" else self._generate_fallback_talk()
-
-        return super().talk()
-
-    def _generate_fallback_talk(self) -> str:
-        """LLMが適切な応答をしない場合のフォールバック発言"""
-        alive = self.get_alive_agents()
-        if len(alive) > 1:
-            # 疑惑スコアが高い人を指摘
-            if self.memory.suspicion_scores:
-                top_suspect = max(
-                    self.memory.suspicion_scores.items(),
-                    key=lambda x: x[1]
-                )
-                return f"{top_suspect[0]}の発言が気になります。"
-        return "引き続き様子を見ます。"
-```
-
-### 優先度: 高
-
-#### 3. 疑惑スコアの計算ロジック改善
-
-**目的**: 発言内容や行動パターンを反映した精度の高いスコアを算出
-
-**実装案**:
-
-##### 1. `src/agent/memory.py` の `calculate_suspicion()` を拡張
-```python
-def calculate_suspicion(self, agent: str, info) -> float:
-    """疑わしさスコアを計算 (0.0-10.0)"""
-    score = 5.0  # 基本値
-
-    # 1. 矛盾に関与している場合 (+2.0点)
-    contradictions = self.detect_contradictions()
-    for c in contradictions:
-        if agent in c.get("agents", []):
-            score += 2.0
-
-    # 2. 発言が少ない場合 (+1.0点)
-    if agent in self.talk_counts:
-        if self.talk_counts[agent] < 2:
-            score += 1.0
-
-    # 3. 「Over」が多い場合 (+0.5点)
-    if agent in self.over_counts:
-        if self.over_counts[agent] > 2:
-            score += 0.5
-
-    # 4. 占い結果が黒の場合 (+3.0点)
-    for claimer, claim_data in self.claims.items():
-        divined = claim_data.get("divined", {})
-        if agent in divined:
-            if divined[agent]["result"] == "人狼":
-                score += 3.0
-
-    # 5. 投票パターンが不自然（吊られた人に投票していない）(-1.0点)
-    if self.voting_history:
-        for vote_record in self.voting_history:
-            if vote_record["executed"]:
-                if agent in vote_record["votes"]:
-                    if vote_record["votes"][agent] != vote_record["executed"]:
-                        score += 0.5
-
-    # 6. 生存日数が長い（最終日に近い場合）(+0.5点)
-    if info.day >= 4:
-        score += 0.5
-
-    return min(10.0, max(0.0, score))
-```
-
-##### 2. 発言カウント機能の追加
-```python
-class MemorySystem:
-    def __init__(self):
-        ...
-        self.talk_counts = {}  # {agent: count}
-        self.over_counts = {}  # {agent: over_count}
-
-    def record_talk(self, agent: str, text: str):
-        """発言を記録"""
-        if agent not in self.talk_counts:
-            self.talk_counts[agent] = 0
-        self.talk_counts[agent] += 1
-
-        if text.strip() == "Over":
-            if agent not in self.over_counts:
-                self.over_counts[agent] = 0
-            self.over_counts[agent] += 1
-
-    def record_vote(self, day: int, votes: dict, executed: str):
-        """投票結果を記録"""
-        self.voting_history.append({
-            "day": day,
-            "votes": votes,
-            "executed": executed
-        })
-```
-
-#### 4. 発言パーサーのテストと検証
-
-**目的**: パーサーが正しく動作していることを確認
-
-**実装案**:
-
-##### 1. ユニットテストの追加 (`tests/test_talk_parser.py`)
-```python
-import pytest
-from src.utils.talk_parser import TalkParser
-from aiwolf_nlp_common.packet import Role
-
-def test_parse_role_claim_seer():
-    parser = TalkParser()
-
-    # 占い師COのパターン
-    assert parser.parse_role_claim("私は占い師です") == Role.SEER
-    assert parser.parse_role_claim("占い師CO") == Role.SEER
-    assert parser.parse_role_claim("僕が占いします") == Role.SEER
-
-def test_parse_divine_result():
-    parser = TalkParser()
-    agents = ["アスカ", "ミオ", "シュンイチ"]
-
-    # 人狼判定
-    result = parser.parse_divine_result("アスカを占って人狼でした", agents)
-    assert result == {"target": "アスカ", "result": "人狼"}
-
-    # 村人判定
-    result = parser.parse_divine_result("ミオを占って村人でした", agents)
-    assert result == {"target": "ミオ", "result": "村人"}
-
-def test_parse_vote_intention():
-    parser = TalkParser()
-    agents = ["アスカ", "ミオ", "シュンイチ"]
-
-    # 投票意図
-    assert parser.parse_vote_intention("アスカに投票します", agents) == "アスカ"
-    assert parser.parse_vote_intention("ミオを処刑したい", agents) == "ミオ"
-```
-
-##### 2. デバッグログの追加
-```python
-# src/agent/agent.py
-def daily_initialize(self):
-    """朝の初期化時に発言を解析"""
-    if self.talk_history:
-        for talk in self.talk_history:
-            # 発言カウント
-            self.memory.record_talk(talk.agent, talk.text)
-
-            # 役職COを検出
-            role = self.parser.parse_role_claim(talk.text)
-            if role:
-                self.memory.add_role_claim(talk.agent, role.value, self.info.day)
-                self.agent_logger.logger.info(
-                    f"Detected role claim: {talk.agent} -> {role.value}"
-                )
-
-            # 占い結果を検出
-            alive_agents = self.get_alive_agents()
-            divine_result = self.parser.parse_divine_result(talk.text, alive_agents)
-            if divine_result:
-                self.memory.add_divine_claim(
-                    talk.agent,
-                    divine_result["target"],
-                    divine_result["result"],
-                    self.info.day
-                )
-                self.agent_logger.logger.info(
-                    f"Detected divine result: {talk.agent} -> {divine_result}"
-                )
-
-        # メモリの状態をログに出力
-        self.agent_logger.logger.info(f"Memory claims: {self.memory.claims}")
-        self.agent_logger.logger.info(f"Talk counts: {self.memory.talk_counts}")
-```
-
-### 優先度: 中
-
-#### 5. 記憶・推論システムの継続的改善（実装済みのため拡張）
-
-**目的**: 既に実装された記憶システムをさらに拡張
-
-**実装案**（既存のMemorySystemクラス）:
-    """エージェントの記憶と推論を管理"""
-    # 実装済み - さらなる拡張として以下を追加
-
-    def analyze_voting_patterns(self, agent: str) -> dict:
-        """投票パターンを分析"""
-        patterns = {
-            "always_follows_majority": False,
-            "protects_specific_agent": None,
-            "voting_consistency": 0.0
-        }
-
-        if not self.voting_history:
-            return patterns
-
-        # 多数派に従うかチェック
-        follow_count = 0
-        for vote_record in self.voting_history:
-            if agent in vote_record["votes"]:
-                voted_for = vote_record["votes"][agent]
-                # 最終的に処刑された人に投票していたか
-                if voted_for == vote_record.get("executed"):
-                    follow_count += 1
-
-        if len(self.voting_history) > 0:
-            patterns["voting_consistency"] = follow_count / len(self.voting_history)
-
-        return patterns
-
-    def get_memory_summary(self) -> str:
-        """記憶の要約を生成（プロンプトへの埋め込み用）"""
-        summary = []
-
-        # 役職CO情報
-        if self.claims:
-            summary.append("【役職CO情報】")
-            for agent, claim in self.claims.items():
-                if "role" in claim:
-                    summary.append(f"- {agent}: {claim['role']} (CO日: {claim['co_day']}日目)")
-
-        # 占い結果情報
-        for agent, claim in self.claims.items():
-            if "divined" in claim:
-                summary.append(f"\n【{agent}の占い結果】")
-                for target, result in claim["divined"].items():
-                    summary.append(f"- {target}: {result['result']} ({result['day']}日目)")
-
-        # 矛盾情報
-        contradictions = self.detect_contradictions()
-        if contradictions:
-            summary.append("\n【検出された矛盾】")
-            for c in contradictions:
-                summary.append(f"- {c['description']}")
-
-        return "\n".join(summary) if summary else "特記事項なし"
-```
-
-**プロンプトへの統合例**:
+##### 2. initialize プロンプトにゲームの本質を追加
 ```yaml
-talk: |-
-  ## 記憶情報
-  {{ memory_summary }}
+initialize: |-
+  # 🎮 あなたは人狼ゲームのプレイヤーです
 
-  ## 疑惑度ランキング
-  {% if suspicion_scores -%}
-  {% for agent, score in suspicion_scores.items() | sort(attribute='1', reverse=True) -%}
-  {{ loop.index }}. {{ agent }}: {{ "%.1f"|format(score) }}/10
-  {% endfor %}
+  ## 🎯 ゲームの目的
+  これは推理と欺瞞のゲームです。アリバイや一般的な会話は意味がありません。
+  重要なのは：役職推理、矛盾検出、投票による処刑です。
+
+  ## あなたの役職と戦略
+  {% if role.value == 'SEER' -%}
+  【占い師】村人陣営
+  - 毎晩1人を占い、人狼か否かを知る
+  - Day 1-2で必ずCOする（遅いと襲撃される）
+  - 占い結果を村人に共有して人狼を処刑に導く
+  {%- elif role.value == 'WEREWOLF' -%}
+  【人狼】人狼陣営
+  - 占い師を早期に見つけて襲撃する
+  - 村人のふりをして疑いを逸らす
+  - 偽の推理で村人を混乱させる
+  {%- elif role.value == 'POSSESSED' -%}
+  【狂人】人狼陣営（占われると村人判定）
+  - 人狼を守るために村人を誤誘導する
+  - 偽占い師COも有効な戦略
+  {%- else -%}
+  【村人】村人陣営
+  - 占い師のCOと占い結果を信じる
+  - 発言の矛盾から人狼を推理する
+  - 投票で人狼を処刑する
   {%- endif %}
+
+  ## ⚠️ 重要な注意
+  - アリバイや行動説明は不要（ゲームに影響しない）
+  - 全ての発言は役職推理か投票誘導に繋がるべき
 ```
 
-#### 6. 役職別戦略の拡張（実装済みのため追加機能）
-
-**実装済みの拡張**: 占い師以外の役職にも戦略を追加
-
-```python
-# src/agent/werewolf.py
-class Werewolf(Agent):
-    """人狼エージェント"""
-
-    def __init__(self, config, name, game_id, role):
-        super().__init__(config, name, game_id, Role.WEREWOLF)
-        self.fake_seer_claim = False  # 偽占い師CO済みか
-        self.fake_divine_results = []  # 偽占い結果
-
-    def talk(self) -> str:
-        """人狼の戦略的な発言"""
-        # 真の占い師が出た場合、対抗COを検討
-        seers = [a for a, c in self.memory.claims.items() if c.get("role") == "占い師"]
-        if len(seers) > 0 and not self.fake_seer_claim and self.info.day >= 2:
-            # 対抗COする
-            self.fake_seer_claim = True
-            return "私も占い師です。真実を明らかにします。"
-
-        # 偽占い結果を報告
-        if self.fake_seer_claim and self.should_announce_fake_result():
-            return self.create_fake_divine_result()
-
-        return super().talk()
-
-    def should_announce_fake_result(self) -> bool:
-        """偽占い結果を報告すべきか"""
-        # まだ報告していない占い結果がある場合
-        return len(self.fake_divine_results) < self.info.day - 1
-
-    def create_fake_divine_result(self) -> str:
-        """偽の占い結果を生成（村人を白判定）"""
-        alive = self.get_alive_agents()
-        # 自分と他の人狼を除外
-        candidates = [a for a in alive if a != self.agent_name]
-        if candidates:
-            target = random.choice(candidates)
-            self.fake_divine_results.append({"target": target, "result": "村人"})
-            return f"{target}を占いました。村人です。"
-        return "Over"
-
-    def attack(self) -> str:
-        """襲撃先を決定（真の占い師を優先）"""
-        alive_agents = self.get_alive_agents()
-
-        # 真の占い師を優先的に襲撃
-        seers = [a for a, c in self.memory.claims.items()
-                 if c.get("role") == "占い師" and a != self.agent_name and a in alive_agents]
-
-        if seers:
-            # 複数いる場合は最初にCOした人を襲撃
-            seers_sorted = sorted(seers, key=lambda a: self.memory.claims[a].get("co_day", 99))
-            return seers_sorted[0]
-
-        # 占い師がいない場合は疑惑度が低い人を襲撃（ステルス対策）
-        if self.memory.suspicion_scores:
-            candidates_with_score = [
-                (agent, self.memory.suspicion_scores.get(agent, 5.0))
-                for agent in alive_agents if agent != self.agent_name
-            ]
-            # 疑惑度が低い順にソート
-            candidates_with_score.sort(key=lambda x: x[1])
-            return candidates_with_score[0][0]
-
-        return self._parse_agent_name(super().attack())
-```
-
-```python
-# src/agent/villager.py
-class Villager(Agent):
-    """村人エージェント"""
-
-    def vote(self) -> str:
-        """投票先を決定（疑惑度を考慮）"""
-        # 疑惑度が最も高い人に投票
-        if self.memory.suspicion_scores:
-            alive = self.get_alive_agents()
-            alive_scores = {
-                agent: self.memory.suspicion_scores.get(agent, 5.0)
-                for agent in alive if agent != self.agent_name
-            }
-            if alive_scores:
-                top_suspect = max(alive_scores.items(), key=lambda x: x[1])
-                self.agent_logger.logger.info(
-                    f"Voting for top suspect: {top_suspect[0]} (score: {top_suspect[1]})"
-                )
-                return top_suspect[0]
-
-        return self._parse_agent_name(super().vote())
-```
-
-#### 7. Chain-of-Thought プロンプト
-
-**目的**: LLMに思考過程を踏ませて推論精度を向上
-
-**実装案**:
+##### 3. daily_initialize プロンプトで前日の分析を促す
 ```yaml
-vote: |-
-  ## ステップ1: 状況整理
-  現在{{ info.day }}日目です。生存者は以下の通りです：
-  {% for k, v in info.status_map.items() -%}
-  {%- if v == 'ALIVE' -%}
-  - {{ k }}
-  {% endif -%}
-  {%- endfor %}
+daily_initialize: |-
+  ## 🌅 {{ info.day }}日目の朝が始まりました
 
-  ## ステップ2: 各プレイヤーの評価
-  各プレイヤーについて、人狼である可能性を評価してください。
-  考慮すべき点：
-  - 発言内容の一貫性
-  - 占い結果との整合性
-  - 投票行動のパターン
-  - 疑わしい発言や行動
+  {% if info.executed_agent -%}
+  ⚰️ 昨日処刑されたのは: {{ info.executed_agent }}
+  {%- endif %}
+  {% if info.attacked_agent -%}
+  💀 昨晩襲撃されたのは: {{ info.attacked_agent }}
+  {%- endif %}
 
-  ## ステップ3: 最終決定
-  最も人狼である可能性が高いプレイヤーの名前のみを出力してください。
-  説明は不要です。名前だけを出力してください。
+  {% if role.value == 'SEER' and divine_result -%}
+  🔍 あなたの占い結果: {{ divine_result.target }} は 【{{ "人狼" if divine_result.result == "WEREWOLF" else "村人" }}】です！
+  {%- endif %}
 
-  対象:
-  {% for k, v in info.status_map.items() -%}
-  {%- if v == 'ALIVE' -%}
-  {{ k }}
-  {% endif -%}
-  {%- endfor %}
+  ## 💭 今日の戦略
+  {% if role.value == 'SEER' -%}
+  - まだCOしていない場合は今日COする
+  - 占い結果を報告する
+  - 人狼を見つけた場合は投票を呼びかける
+  {%- elif role.value == 'WEREWOLF' -%}
+  - 占い師を特定する（COした人を今夜襲撃）
+  - 村人のふりを続ける
+  {%- elif role.value == 'POSSESSED' -%}
+  - 人狼を守るために誤情報を流す
+  {%- else -%}
+  - 占い師のCOを待つ
+  - 占い結果を基に投票先を決める
+  {%- endif %}
+
+  現在の生存者: {{ status_map.keys() | select("alive") | list | join(", ") }}
 ```
 
-### 優先度: 低
+#### 7. 疑惑スコア計算の改善
 
-#### 8. 多様なLLMモデルの活用
+**現状**: 全員5.0点でほぼ差がない
 
-**アイデア**: 重要な判断には強力なモデルを使用
-
-```python
-def vote(self) -> str:
-    """投票は重要なので強力なモデルを使用"""
-    if self.config["llm"].get("use_strong_model_for_vote", False):
-        original_model = self.llm_model
-        self.llm_model = self.create_model("gpt-4")
-        response = self._send_message_to_llm(self.request)
-        self.llm_model = original_model
-    else:
-        response = self._send_message_to_llm(self.request)
-    return self._parse_agent_name(response)
-```
+**改善案**:
+- 発言内容の感情分析
+- 投票パターンの分析
+- COのタイミングや内容の矛盾分析
+- ただし、現時点では占い師COすら動いていないので、優先度は低い
 
 ---
+
+### 優先度: 🔵 低（将来的に）
+
+#### 8. 人狼・狂人の戦略強化
+
+**目的**: 人狼陣営の勝率を上げる
+
+**実装案**:
+- 偽占い師CO
+- 占い結果の捏造
+- 村人陣営の分断戦略
+
+**現状**: 占い師が動いていないので、まず占い師を直してから
+
+#### 9. 霊媒師・騎士の実装
+
+**現状**: 5人村では登場しない
+
+**実装タイミング**: 13人村に拡張する際
+
+---
+
+## TODO（優先順）
+
+1. ✅ **完了**: メモリシステム実装
+2. ✅ **完了**: 発言パーサー実装
+3. ✅ **完了**: 占い師CO機能実装（コードレベル）
+4. ✅ **完了**: 早期Over防止実装
+5. 🐛 **今すぐ**: Species型比較バグ修正 (agent.py:366, seer.py:204)
+6. 🐛 **今すぐ**: 自分を占うバグ修正 (seer.py divine())
+7. ⚠️ **今すぐ**: CO条件を Day 1 に変更 (seer.py should_claim_seer())
+8. 🎯 **今すぐ**: プロンプト改善（ゲームの本質に焦点）(config.yml)
+9. 🧪 **次**: 実行テスト（上記4点修正後）
+10. 📊 **次**: ログ分析（CO機能が実際に動作するか確認）
+
+---
+
 
 ## 開発Tips
 
