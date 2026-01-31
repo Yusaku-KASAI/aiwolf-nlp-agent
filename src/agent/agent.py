@@ -26,8 +26,10 @@ if TYPE_CHECKING:
 
 from aiwolf_nlp_common.packet import Info, Packet, Request, Role, Setting, Status, Talk
 
+from agent.memory import MemorySystem
 from utils.agent_logger import AgentLogger
 from utils.stoppable_thread import StoppableThread
+from utils.talk_parser import TalkParser
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,6 +75,15 @@ class Agent:
         self.sent_whisper_count: int = 0
         self.llm_model: BaseChatModel | None = None
         self.llm_message_history: list[BaseMessage] = []
+
+        # Memory and reasoning system
+        # 記憶・推論システム
+        self.memory = MemorySystem()
+        self.parser = TalkParser()
+
+        # Talk counts for suspicion calculation
+        # 疑惑度計算用の発言数
+        self.talk_counts: dict[str, int] = {}
 
         load_dotenv(Path(__file__).parent.joinpath("./../../config/.env"))
 
@@ -191,6 +202,13 @@ class Agent:
             "role": self.role,
             "sent_talk_count": self.sent_talk_count,
             "sent_whisper_count": self.sent_whisper_count,
+            # Memory system data
+            # 記憶システムのデータ
+            "suspicion_scores": self.memory.suspicion_scores,
+            "contradictions": self.memory.contradictions,
+            "claims": self.memory.claims,
+            "divine_results": self.memory.divine_results,
+            "medium_results": self.memory.medium_results,
         }
         template: Template = Template(prompt)
         prompt = template.render(**key).strip()
@@ -266,6 +284,96 @@ class Agent:
 
         昼開始リクエストに対する処理を行う.
         """
+        # Parse talk history and update memory
+        # 発言履歴を解析してメモリを更新
+        if self.talk_history:
+            alive_agents = self.get_alive_agents()
+
+            # Count talks by each agent
+            # 各エージェントの発言数をカウント
+            for talk in self.talk_history:
+                self.talk_counts[talk.agent] = self.talk_counts.get(talk.agent, 0) + 1
+
+                # Parse talk content
+                # 発言内容を解析
+                info = self.parser.extract_all_info(talk.text, alive_agents)
+
+                # Record role claim
+                # 役職COを記録
+                if info["role_claim"]:
+                    self.memory.add_role_claim(
+                        talk.agent, info["role_claim"], self.info.day if self.info else 0
+                    )
+                    self.agent_logger.logger.info(
+                        f"Role claim detected: {talk.agent} -> {info['role_claim']}"
+                    )
+
+                # Record divine result claim
+                # 占い結果の主張を記録
+                if info["divine_result"]:
+                    result = info["divine_result"]
+                    self.memory.add_divine_claim(
+                        talk.agent,
+                        result["target"],
+                        result["result"],
+                        self.info.day if self.info else 0,
+                    )
+                    self.agent_logger.logger.info(
+                        f"Divine result detected: {talk.agent} -> {result['target']}: {result['result']}"
+                    )
+
+                # Record medium result claim
+                # 霊媒結果の主張を記録
+                if info["medium_result"]:
+                    result = info["medium_result"]
+                    self.memory.add_medium_claim(
+                        talk.agent,
+                        result["target"],
+                        result["result"],
+                        self.info.day if self.info else 0,
+                    )
+                    self.agent_logger.logger.info(
+                        f"Medium result detected: {talk.agent} -> {result['target']}: {result['result']}"
+                    )
+
+            # Detect contradictions
+            # 矛盾を検出
+            contradictions = self.memory.detect_contradictions()
+            if contradictions:
+                self.agent_logger.logger.info(f"Contradictions detected: {contradictions}")
+
+            # Calculate suspicion scores
+            # 疑惑スコアを計算
+            self.memory.calculate_all_suspicions(alive_agents, self.talk_counts)
+
+            self.agent_logger.logger.debug(
+                f"Memory summary: {self.memory.get_summary()}"
+            )
+
+        # Record my divine result if available
+        # 自分の占い結果を記録
+        if self.info and self.info.divine_result:
+            self.memory.add_my_divine_result(
+                self.info.divine_result.target,
+                self.info.divine_result.result == "WEREWOLF",
+                self.info.day,
+            )
+            self.agent_logger.logger.info(
+                f"My divine result: {self.info.divine_result.target} -> {self.info.divine_result.result}"
+            )
+
+        # Record my medium result if available
+        # 自分の霊媒結果を記録
+        if self.info and self.info.medium_result:
+            self.memory.add_my_medium_result(
+                self.info.medium_result.target,
+                self.info.medium_result.result == "WEREWOLF",
+                self.info.day,
+            )
+            self.agent_logger.logger.info(
+                f"My medium result: {self.info.medium_result.target} -> {self.info.medium_result.result}"
+            )
+
         self._send_message_to_llm(self.request)
 
     def whisper(self) -> str:
