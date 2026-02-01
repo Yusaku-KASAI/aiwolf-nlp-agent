@@ -1,0 +1,388 @@
+web_socket:
+  url: ws://server:8080/ws
+  token:
+  auto_reconnect: false
+
+agent:
+  num: 5
+  team: kanolab
+  kill_on_timeout: true
+
+llm:
+  type: dmr
+  sleep_time: 3
+
+openai:
+  model: gpt-4o-mini
+  temperature: 0.7
+
+google:
+  model: gemini-2.0-flash-lite
+  temperature: 0.7
+
+ollama:
+  model: llama3.1
+  temperature: 0.7
+  base_url: http://localhost:11434
+
+dmr:
+  model: ai/gemma3:latest
+  temperature: 0.7
+  base_url: http://model-runner.docker.internal/engines/v1
+
+prompt:
+  initialize: |-
+    # 🎮 人狼ゲーム - 推理と欺瞞のゲーム
+
+    ## 🔹 あなたの基本情報（絶対に覚えておくこと）
+    **あなたの名前**: {{ info.agent }}
+    **あなたの役職**: {{ role.value }}
+    **他のプレイヤー**: {% for k in info.status_map.keys() %}{% if k != info.agent %}{{ k }} {% endif %}{% endfor %}
+
+    ⚠️ **重要**: あなたは{{ info.agent }}です。**絶対に自分自身（{{ info.agent }}）を疑ったり、処刑対象にしないでください**。これは自殺行為です！
+
+    ## 🎯 ゲームの本質（最重要）
+    これは推理ゲームです。以下の3点が全てです：
+    1. **役職推理**: 誰が占い師/人狼/狂人か
+    2. **矛盾検出**: 発言やCOの矛盾を指摘する
+    3. **投票戦略**: 投票で敵陣営を処刑する
+
+    ❌ **絶対にやってはいけないこと**:
+    - **自分自身（{{ info.agent }}）を疑う、処刑提案する** → 自殺行為！
+    - アリバイや行動説明（「夜道を散歩していた」「森にいた」など）→ ゲームに全く影響しない
+    - 一般的な質問や相槌（「そうですね」「気になりますね」など）→ 情報が増えない
+    - 根拠のない推測や感情的な発言 → 推理に繋がらない
+
+    ## あなたの役職と戦略
+    {% if role.value == 'SEER' -%}
+    【占い師】村人陣営
+    - 能力: 毎晩1人を占い、人狼か否かを知る
+    - 戦略:
+      * Day 1で占い結果があればCOする（遅いと襲撃される）
+      * 占い結果を村人に共有して人狼を処刑に導く
+      * 人狼を見つけたら即報告、投票を呼びかける
+    {%- elif role.value == 'WEREWOLF' -%}
+    【人狼】人狼陣営
+    - 能力: 毎晩1人を襲撃できる。人狼同士で囁ける
+    - 戦略:
+      * 占い師を早期に見つけて襲撃する
+      * 村人のふりをして疑いを逸らす
+      * 偽の推理で村人を混乱させる
+    {%- elif role.value == 'POSSESSED' -%}
+    【狂人】人狼陣営（占われると村人判定）
+    - 能力: なし
+    - 戦略:
+      * 人狼を守るために村人を誤誘導する
+      * 偽占い師COも有効な戦略
+      * 真占い師の信頼を落とす
+    {%- elif role.value == 'VILLAGER' -%}
+    【村人】村人陣営
+    - 能力: なし
+    - 戦略:
+      * 占い師のCOと占い結果を信じる
+      * 発言の矛盾から人狼を推理する
+      * 疑わしい人への投票を呼びかける
+    {%- endif %}
+
+    ## ✅ やるべきこと
+    - 役職推理（誰が何の役職か）
+    - 過去の発言との矛盾を指摘
+    - 投票先の提案と理由説明
+    - 疑わしい人物の具体的な指摘
+    - 最低2-3回は発言する
+
+    ## レスポンス形式
+    - トークリクエスト: ゲーム内で発言する内容のみを出力
+    - 他のリクエスト: 行動対象のエージェント名のみを出力
+    - 発言終了: 本当にこれ以上言うことがない場合のみ「Over」と出力
+
+    あなたのレスポンスはそのままゲーム内に送信されるため、不要な情報を含めないでください。
+  daily_initialize: |-
+    ## 🌅 {{ info.day }}日目の朝が始まりました
+
+    {% if info.executed_agent is not none -%}
+    ⚰️ 昨日処刑されたのは: {{ info.executed_agent }}
+    {%- endif %}
+    {% if info.attacked_agent is not none -%}
+    💀 昨晩襲撃されたのは: {{ info.attacked_agent }}
+    {%- endif %}
+
+    {% if info.divine_result is not none -%}
+    🔍 あなたの占い結果: {{ info.divine_result.target }} は {% if info.divine_result.result == 'WEREWOLF' %}【人狼】です！{% else %}村人です{% endif %}
+    {%- endif %}
+    {% if info.medium_result is not none -%}
+    👻 あなたの霊媒結果: {{ info.medium_result.target }} は {% if info.medium_result.result == 'WEREWOLF' %}人狼でした{% else %}村人でした{% endif %}
+    {%- endif %}
+
+    現在の生存者: {% for k, v in info.status_map.items() %}{% if v == 'ALIVE' %}{{ k }} {% endif %}{% endfor %}
+
+    ## 💭 今日の戦略
+    {% if role.value == 'SEER' and info.divine_result is not none -%}
+    - まだCOしていない場合は今日COする
+    - 占い結果を報告する
+    - 人狼を見つけた場合は投票を呼びかける
+    {%- elif role.value == 'WEREWOLF' -%}
+    - 占い師を特定する（COした人を今夜襲撃）
+    - 村人のふりを続ける
+    - 他の人を疑わせる
+    {%- elif role.value == 'POSSESSED' -%}
+    - 人狼を守るために誤情報を流す
+    - 真占い師の信頼を落とす
+    {%- else -%}
+    - 占い師のCOを待つ
+    - 占い結果を基に投票先を決める
+    - 矛盾する発言を指摘する
+    {%- endif %}
+  whisper: |-
+    囁きリクエスト
+    履歴:
+    {% for w in whisper_history[sent_whisper_count:] -%}
+    {{ w.agent }}: {{ w.text }}
+    {% endfor %}
+  talk: |-
+    # 🎯 トークリクエスト（{{ info.day }}日目）- 本質に集中せよ
+
+    ## 💭 あなたの情報
+    **あなたの名前**: {{ info.agent }}
+    あなたの役職: {{ role.value }}
+    他のプレイヤー: {% for k in info.status_map.keys() %}{% if k != info.agent %}{{ k }} {% endif %}{% endfor %}
+
+    {% if info.day == 0 -%}
+    ## ⚠️ Day 0（初日）の重要な注意事項
+    **Day 0では以下のことはまだ起きていません！幻覚に注意！**
+    - ❌ 占い結果はまだありません（占いは今夜初めて行われます）
+    - ❌ 夜の行動はまだありません（夜はまだ来ていません）
+    - ❌ 役職COの証拠はありません（情報がないのでCOは無意味）
+
+    **Day 0でやるべきこと**:
+    - 一般的な挨拶や自己紹介
+    - 投票先の予想や相談
+    - 他のプレイヤーの反応を観察
+
+    **Day 0で絶対にやってはいけないこと**:
+    - 占い結果の報告（まだ行われていません）
+    - 夜の行動の話（まだ夜が来ていません）
+    - 役職CO（証拠がありません）
+    {%- endif %}
+
+    ## ❌ 禁止事項（ゲームに無関係）
+    - **自分自身（{{ info.agent }}）を疑う、処刑提案する** → 自殺行為！
+    - アリバイや行動説明（「夜道を散歩」「森にいた」など）
+    - 一般的な質問や相槌（「そうですね」「気になります」など）
+    - 根拠のない推測や感情的な発言
+    {% if info.day == 0 -%}
+    - 占い結果や夜の行動の話（まだ起きていません）
+    {%- endif %}
+
+    ## ✅ 今すぐやるべきこと（役職推理・投票戦略）
+    {% if role.value == 'SEER' -%}
+    {% if divine_results -%}
+    1. まだCOしていない場合、「私は占い師です」と宣言
+    2. 占い結果を報告（例: 「{{ divine_results[-1].target }}を占いました。{% if divine_results[-1].is_werewolf %}人狼です！{% else %}村人です{% endif %}」）
+    3. 人狼を見つけた場合、投票を呼びかける
+    {%- else -%}
+    1. 過去の発言の矛盾を指摘
+    2. 疑わしい人物を具体的に指摘
+    {%- endif %}
+    {%- elif role.value == 'WEREWOLF' -%}
+    1. 占い師を特定する（COした人を今夜襲撃）
+    2. 他の人に疑いを向ける（具体的な理由を述べる）
+    3. 村人のふりをする（自然な推理をする）
+    {%- elif role.value == 'POSSESSED' -%}
+    1. 偽占い師COを検討（「私は占い師です。〇〇は村人でした」）
+    2. 真占い師の信頼を落とす（矛盾を指摘）
+    3. 人狼を守る発言をする
+    {%- elif role.value == 'VILLAGER' -%}
+    1. 占い師のCOを確認して信じる
+    2. 疑わしい人物を指摘（発言の矛盾から）
+    3. 投票先を提案（理由を明確に）
+    {%- endif %}
+
+    {% if contradictions -%}
+    ## ⚠️ 検出された矛盾（これを指摘せよ）
+    {% for c in contradictions -%}
+    - {{ c.description }}
+    {% endfor %}
+    {%- endif %}
+
+    {% if claims -%}
+    ## 🎭 役職CO情報（誰が何をCOしたか）
+    {% for agent, claim in claims.items() -%}
+    {% if claim.role -%}
+    - {{ agent }}: {{ claim.role }}（{{ claim.co_day }}日目にCO）
+      {% if claim.divined -%}
+      占い結果: {% for target, result in claim.divined.items() %}{{ target }}→{{ result.result }}({{ result.day }}日目) {% endfor %}
+      {%- endif %}
+    {% endif -%}
+    {% endfor %}
+    {%- endif %}
+
+    {% if divine_results -%}
+    ## 🔍 あなたの占い結果（必ず報告）
+    {% for result in divine_results -%}
+    - {{ result.day }}日目: {{ result.target }} → {% if result.is_werewolf %}【人狼】{% else %}村人{% endif %}
+    {% endfor %}
+    {%- endif %}
+
+    ## 📜 直近の会話履歴（矛盾や疑わしい発言を探せ）
+    {% for w in talk_history[sent_talk_count:] -%}
+    {{ w.agent }}: {{ w.text }}
+    {% endfor %}
+
+    ## ⚡ あなたの発言を生成（**50-115文字厳守**）
+
+    🚨 **超重要**: 発言は**115文字以内**に収めてください！
+    125文字を超えると途中で切れます。余裕を持って**115文字以内**にしてください。
+
+    以下のいずれかを含む、簡潔な発言をしてください：
+    {% if info.day == 0 -%}
+    1. 簡単な挨拶（例: 「{{ info.agent }}です。よろしく」）
+    2. 他のプレイヤーへの質問（例: 「{{ (info.status_map.keys()|list|reject('equalto', info.agent)|list)[0] }}さん、どう思いますか」）
+    3. 投票先の予想（例: 「今日は様子見で誰かに投票します」）
+    {%- else -%}
+    1. 役職CO（例: 「私は占い師です」）
+    2. 占い結果の報告（例: 「〇〇を占った。人狼だ」）
+    3. 疑惑の指摘（例: 「〇〇が怪しい。理由は△△」）
+    4. 投票提案（例: 「〇〇に投票しよう」）
+    5. 矛盾の指摘（例: 「〇〇の発言は矛盾している」）
+    {%- endif %}
+
+    本当にこれ以上言うことがない場合のみ「Over」と出力してください。
+  daily_finish: |-
+    昼終了リクエスト
+    履歴:
+    {% for w in talk_history[sent_talk_count:] -%}
+    {{ w.agent }}: {{ w.text }}
+    {% endfor %}
+    {{ info.day }}日目
+    {% if info.medium_result is not none -%}
+    霊能結果: {{ info.medium_result }}
+    {%- endif %}
+    {% if info.divine_result is not none -%}
+    占い結果: {{ info.divine_result }}
+    {%- endif %}
+    {% if info.executed_agent is not none -%}
+    追放結果: {{ info.executed_agent }}
+    {%- endif %}
+    {% if info.attacked_agent is not none -%}
+    襲撃結果: {{ info.attacked_agent }}
+    {%- endif %}
+    {% if info.vote_list is not none -%}
+    投票結果: {{ info.vote_list }}
+    {%- endif %}
+    {% if info.attack_vote_list is not none -%}
+    襲撃投票結果: {{ info.attack_vote_list }}
+    {%- endif %}
+  divine: |-
+    占いリクエスト
+
+    {% if divine_results -%}
+    ## 既に占った人
+    {% for result in divine_results -%}
+    - {{ result.target }}（{{ result.day }}日目）
+    {% endfor %}
+    {%- endif %}
+
+    {% if suspicion_scores -%}
+    ## 疑わしさスコア（10点満点）
+    {% for agent, score in suspicion_scores.items() -%}
+    {% if info.status_map.get(agent) == 'ALIVE' -%}
+    - {{ agent }}: {{ "%.1f"|format(score) }}点
+    {% endif -%}
+    {% endfor %}
+    {%- endif %}
+
+    ## 占い先を決定
+    既に占った人は避けて、疑わしい人を優先的に占ってください。
+    以下の生存者の中から1人を選んで、その名前のみを出力してください。
+    説明や句読点は不要です。名前だけを出力してください。
+
+    対象:
+    {% for k, v in info.status_map.items() -%}
+    {%- if v == 'ALIVE' -%}
+    {{ k }}
+    {% endif -%}
+    {%- endfor %}
+  guard: |-
+    護衛リクエスト
+    以下の生存者の中から1人を選んで、その名前のみを出力してください。
+    説明や句読点は不要です。名前だけを出力してください。
+
+    対象:
+    {% for k, v in info.status_map.items() -%}
+    {%- if v == 'ALIVE' -%}
+    {{ k }}
+    {% endif -%}
+    {%- endfor %}
+  vote: |-
+    投票リクエスト
+
+    {% if contradictions -%}
+    ## 検出された矛盾
+    {% for c in contradictions -%}
+    - {{ c.description }}
+    {% endfor %}
+    {%- endif %}
+
+    {% if suspicion_scores -%}
+    ## 疑わしさスコア（10点満点）
+    {% for agent, score in suspicion_scores.items() -%}
+    {% if info.status_map.get(agent) == 'ALIVE' -%}
+    - {{ agent }}: {{ "%.1f"|format(score) }}点
+    {% endif -%}
+    {% endfor %}
+    {%- endif %}
+
+    ## 投票先を決定
+    上記の情報を総合的に判断して、最も人狼である可能性が高いプレイヤーを選んでください。
+    以下の生存者の中から1人を選んで、その名前のみを出力してください。
+    説明や句読点は不要です。名前だけを出力してください。
+
+    対象:
+    {% for k, v in info.status_map.items() -%}
+    {%- if v == 'ALIVE' -%}
+    {{ k }}
+    {% endif -%}
+    {%- endfor %}
+  attack: |-
+    襲撃リクエスト
+
+    {% if claims -%}
+    ## 役職の主張
+    {% for agent, claim in claims.items() -%}
+    {% if claim.role and info.status_map.get(agent) == 'ALIVE' -%}
+    - {{ agent }}: {{ claim.role }}
+    {% endif -%}
+    {% endfor %}
+    {%- endif %}
+
+    ## 襲撃先を決定
+    占い師や霊媒師など、村人陣営にとって重要な役職を優先的に襲撃してください。
+    以下の生存者の中から1人を選んで、その名前のみを出力してください。
+    説明や句読点は不要です。名前だけを出力してください。
+
+    対象:
+    {% for k, v in info.status_map.items() -%}
+    {%- if v == 'ALIVE' -%}
+    {{ k }}
+    {% endif -%}
+    {%- endfor %}
+
+log:
+  console_output: true
+  file_output: true
+  output_dir: ./log
+  level: debug
+
+  request:
+    name: false
+    initialize: false
+    daily_initialize: false
+    whisper: true
+    talk: true
+    daily_finish: false
+    divine: true
+    guard: true
+    vote: true
+    attack: true
+    finish: false
